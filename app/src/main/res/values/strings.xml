@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">ModHub</string>
+    <string name="restart_a11y_desc">Only used after an addon import: opens Minecraft\'s App info page in Settings and presses Force stop plus its confirmation, so Minecraft restarts and shows the new pack. It is restricted to the Settings app and does nothing else.</string>
+</resources>
