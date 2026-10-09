@@ -36,9 +36,19 @@ Free. Open source. No ads, no accounts, no analytics.
 
 Minecraft only lists a new pack after it restarts. ModHub can do that for you if you grant two permissions in its Settings: **Display over other apps** and the **Restart helper** accessibility service. The service is limited by its own declaration to the Android Settings app and only presses "Force stop" and "OK" on Minecraft's App info page. If Android calls it a "restricted setting": Settings > Apps > ModHub > 3-dot menu > Allow restricted settings. Skip both and you simply get a notification to restart by hand.
 
-### Optional: CurseForge key
+### Optional: CurseForge key (free, about 2 minutes)
 
-CurseForge needs a free API key from <https://console.curseforge.com>. Paste it in Settings. It is stored only on your phone and sent only to CurseForge.
+MCPEDL works right away. CurseForge results need a free API key, which CurseForge requires from every app that uses its catalog.
+
+1. On a computer or your phone, go to <https://console.curseforge.com> and sign in (or create a free CurseForge account).
+2. Open **API keys** in the left menu. If it asks you to create an organization or accept terms, do that (any name works, for example your username).
+3. Copy your API key. It is a long string that starts with `$2a$10$`.
+4. In ModHub tap the gear icon, paste the key into **API key**, and tap **Save**.
+
+Tips:
+- Paste it carefully. The `$` characters are part of the key. A good way is to email or message the key to yourself, then copy and paste it on the phone.
+- Treat the key like a password. It stays only on your phone and is sent only to CurseForge. If it ever leaks, create a new one in the console and replace it.
+- If CurseForge shows "needs an API key" after saving, the key was probably pasted incompletely. Paste it again.
 
 ## FAQ
 
