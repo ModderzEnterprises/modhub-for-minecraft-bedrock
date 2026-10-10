@@ -102,6 +102,19 @@ class ImportService : Service() {
         }
         if (isWorld) { say("Imported - the world is in Minecraft's world list."); return "ok-world" }
 
+        // After Minecraft has finished READING the file it still unpacks and registers the pack. Restarting too early
+        // interrupts that, so wait a while longer (or let the user decide when). 0 = fast (old), 1 = safe (default), 2 = ask.
+        val mode = getSharedPreferences("modhub", Context.MODE_PRIVATE).getInt("restart_mode", 1)
+        if (mode == 2) {
+            postTapNotification()
+            say("Imported. When Minecraft says it's done, tap the notification to restart it.")
+            return "ok-manual"
+        }
+        if (mode == 1) {
+            val mb = files.sumOf { it.length() } / 1_000_000L
+            val waitS = (15L + mb).coerceAtMost(45L)
+            for (left in waitS downTo 1) { say("Letting Minecraft finish unpacking… ${left}s"); delay(1000) }
+        }
         say("Restarting Minecraft so the new pack shows up…")
         val helper = RestartAccessibilityService.instance
         if (helper == null || !Settings.canDrawOverlays(this)) {

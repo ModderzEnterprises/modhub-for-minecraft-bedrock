@@ -49,7 +49,7 @@ val http: OkHttpClient = OkHttpClient.Builder()
     .build()
 
 // Identify honestly (the sites answer this fine): no pretending to be a browser.
-const val UA = "ModHub/1.9 (open-source Minecraft Bedrock addon browser)"
+const val UA = "ModHub/1.11 (open-source Minecraft Bedrock addon browser)"
 
 private fun get(url: String, headers: Map<String, String> = emptyMap()): String {
     val b = Request.Builder().url(url).header("User-Agent", UA)
@@ -257,15 +257,21 @@ object CurseForge {
         if (key.isBlank()) return@withContext "Paste your key first."
         if (!key.startsWith("\$2")) return@withContext "That doesn't look like a CurseForge key. They start with \$2a\$10\$ and are about 60 characters. Yours is ${key.length}."
         try {
-            get("$API/games/$BEDROCK_GAME_ID", mapOf("x-api-key" to key, "Accept" to "application/json"))
-            "\u2713 Key works."
-        } catch (e: IllegalStateException) {
-            val m = e.message ?: ""
-            when {
-                "403" in m || "401" in m -> "CurseForge rejected this key (${m.substringAfter("HTTP ").substringBefore(' ')}). Key length here: ${key.length} (a real one is about 60). Copy it again from console.curseforge.com > API keys."
-                else -> "Couldn't check: $m"
+            val req = Request.Builder().url("$API/games/$BEDROCK_GAME_ID").header("User-Agent", UA)
+                .header("x-api-key", key).header("Accept", "application/json").build()
+            http.newCall(req).execute().use { r ->
+                val body = r.body?.string() ?: ""
+                when {
+                    r.isSuccessful -> "\u2713 Key works."
+                    // A wrong key gets a bare 403. A blocked network/VPN gets an HTML page from CurseForge's firewall.
+                    r.code == 403 && (body.contains("<html", true) || body.contains("cloudflare", true)) ->
+                        "CurseForge is blocking this network (not the key). Try mobile data or Wi-Fi, and turn off any VPN, ad blocker or Private DNS."
+                    r.code == 401 || r.code == 403 -> "CurseForge rejected this key (${r.code}). It has ${key.length} characters; a real one is about 60. Use the Paste button after copying it again from console.curseforge.com > API keys, and check it works on another phone."
+                    r.code == 429 -> "CurseForge says too many requests right now. Wait a minute and try again."
+                    else -> "CurseForge answered with an error (${r.code}). Try again later."
+                }
             }
-        } catch (e: Exception) { "Couldn't reach CurseForge: ${e.message}" }
+        } catch (e: Exception) { "Couldn't reach CurseForge (${e.javaClass.simpleName}). Check the connection, VPN or Private DNS." }
     }
 
     suspend fun files(modId: String, key: String): List<ModFile> = withContext(Dispatchers.IO) {

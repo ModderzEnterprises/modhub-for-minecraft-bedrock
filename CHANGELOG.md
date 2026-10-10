@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.11
+- Restart timing option in Settings: Safe (default, waits 15-45 s so Minecraft finishes unpacking), Fast (old behaviour) or Ask me (notification). Fixes the restart cutting imports short on some phones.
+
+## 1.10
+- API key box no longer capitalises, autocorrects or suggests words (this was corrupting typed keys). Live character count and a "Paste from clipboard" button.
+- "Test key" now tells a wrong key apart from a blocked network.
+
 ## 1.9
 - Settings: "Test key" button that tells you in plain words whether your CurseForge key works.
 - API keys are cleaned automatically (spaces, line breaks, quotes from copy/paste).

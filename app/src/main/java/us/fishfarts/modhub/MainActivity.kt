@@ -551,7 +551,17 @@ fun SettingsDialog(vm: ModVm, onDismiss: () -> Unit) {
             Column {
                 Text("CurseForge API key (free at console.curseforge.com). Stored only on this phone.", color = CfMuted, fontSize = 13.sp)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(value = key, onValueChange = { key = it; keyMsg = null }, singleLine = true, label = { Text("API key") })
+                val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+                OutlinedTextField(
+                    value = key, onValueChange = { key = it; keyMsg = null }, singleLine = true, label = { Text("API key") },
+                    // A key is a random string: stop the keyboard capitalising, "correcting" or suggesting words in it.
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None, autoCorrect = false,
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password, imeAction = ImeAction.Done,
+                    ),
+                    supportingText = { Text("${CurseForge.cleanKey(key).length} characters (a real key is about 60)", color = CfMuted, fontSize = 11.sp) },
+                )
+                TextButton(onClick = { clip.getText()?.text?.let { key = CurseForge.cleanKey(it); keyMsg = null } }) { Text("Paste from clipboard", color = CfOrange) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { keyMsg = "Checking\u2026"; scope.launch { keyMsg = CurseForge.checkKey(key) } }) { Text("Test key", color = CfOrange) }
                     keyMsg?.let { Text(it, color = if (it.startsWith("\u2713")) CfText else CfMuted, fontSize = 12.sp, lineHeight = 16.sp) }
@@ -566,6 +576,16 @@ fun SettingsDialog(vm: ModVm, onDismiss: () -> Unit) {
                         "Otherwise you get a notification that opens Minecraft's App info for you to tap Force stop.",
                     color = CfMuted, fontSize = 12.sp, lineHeight = 17.sp,
                 )
+                Spacer(Modifier.height(8.dp))
+                val prefsR = ctx.getSharedPreferences("modhub", android.content.Context.MODE_PRIVATE)
+                var rmode by remember { mutableStateOf(prefsR.getInt("restart_mode", 1)) }
+                Text("When to restart Minecraft after an import", color = CfText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                listOf(1 to "Safe: wait about 15-45 s so Minecraft finishes (recommended)", 0 to "Fast: restart a few seconds after reading", 2 to "Ask me: send a notification and I'll tap it").forEach { (v, label) ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        RadioButton(selected = rmode == v, onClick = { rmode = v; prefsR.edit().putInt("restart_mode", v).apply() })
+                        Text(label, color = CfText, fontSize = 12.sp, lineHeight = 15.sp)
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (canOverlay) Icons.Filled.CheckCircle else Icons.Filled.Close, null, tint = if (canOverlay) CfOrange else CfMuted, modifier = Modifier.size(16.dp))
