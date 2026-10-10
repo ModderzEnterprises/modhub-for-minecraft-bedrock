@@ -4,7 +4,7 @@
 
 Free. Open source. No ads, no accounts, no analytics.
 
-[![Download](https://img.shields.io/github/v/release/magicmanat1492/modhub-for-minecraft-bedrock?label=Download%20APK&style=for-the-badge)](https://github.com/magicmanat1492/modhub-for-minecraft-bedrock/releases/latest)
+[![Download](https://img.shields.io/github/v/release/ModderzEnterprises/modhub-for-minecraft-bedrock?label=Download%20APK&style=for-the-badge)](https://github.com/ModderzEnterprises/modhub-for-minecraft-bedrock/releases/latest)
 [![Support on Ko-fi](https://img.shields.io/badge/Support%20me%20on-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/magicman1446)
 
 <p>
@@ -26,7 +26,7 @@ Free. Open source. No ads, no accounts, no analytics.
 
 ## Install
 
-1. Download `ModHub-vX.Y.apk` from the [latest release](https://github.com/magicmanat1492/modhub-for-minecraft-bedrock/releases/latest) and open it. Allow "install unknown apps" for your browser/file manager when asked.
+1. Download `ModHub-vX.Y.apk` from the [latest release](https://github.com/ModderzEnterprises/modhub-for-minecraft-bedrock/releases/latest) and open it. Allow "install unknown apps" for your browser/file manager when asked.
 2. (Optional) Verify the file against `SHA256SUMS.txt` from the release. Release signing certificate SHA-256:
    `D5:5C:8B:F3:67:85:59:AA:90:60:5F:63:B1:4A:B3:A6:A7:C5:80:CC:D4:2C:6C:BC:0E:FC:FA:85:C1:3E:CE:9F`
 3. Open ModHub and read the first-run note. It explains every permission.

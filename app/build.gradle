@@ -26,8 +26,8 @@ android {
         applicationId "us.fishfarts.modhub"
         minSdkVersion versions.minSdk
         targetSdkVersion versions.targetSdk
-        versionCode 26
-        versionName "1.7"
+        versionCode 27
+        versionName "1.8"
     }
     signingConfigs {
         if (hasRelease) {

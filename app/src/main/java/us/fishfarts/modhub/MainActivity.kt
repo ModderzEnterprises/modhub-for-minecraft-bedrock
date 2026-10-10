@@ -73,6 +73,7 @@ class ModVm(app: Application) : AndroidViewModel(app) {
     var loading by mutableStateOf(false)
     var selected by mutableStateOf<ModItem?>(null)
     var files by mutableStateOf<List<ModFile>?>(null)
+    var deps by mutableStateOf<List<ModItem>>(emptyList())
     var filesError by mutableStateOf<String?>(null)
     var status by mutableStateOf<String?>(null)
     var installing by mutableStateOf(false)
@@ -154,7 +155,10 @@ class ModVm(app: Application) : AndroidViewModel(app) {
     }
 
     fun open(item: ModItem) {
-        selected = item; files = null; filesError = null; status = null
+        selected = item; files = null; filesError = null; status = null; deps = emptyList()
+        if (item.source == Source.CURSEFORGE && cfKey.isNotBlank()) viewModelScope.launch {
+            runCatching { CurseForge.requiredDeps(item.id, cfKey) }.onSuccess { if (selected == item) deps = it }
+        }
         descText = null; descImages = emptyList(); descLoading = true
         viewModelScope.launch {
             runCatching { fullDescription(item, cfKey) }
@@ -436,6 +440,28 @@ fun DetailScreen(vm: ModVm) {
                             Surface(shape = RoundedCornerShape(50), color = CfSurface2) {
                                 Text(it, color = CfText, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
                             }
+                        }
+                    }
+                }
+                if (vm.deps.isNotEmpty()) {
+                    Spacer(Modifier.height(16.dp))
+                    Surface(shape = RoundedCornerShape(10.dp), color = CfSurface2) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("Needs other packs", color = CfOrange, fontWeight = FontWeight.SemiBold)
+                            Text("Install these too or Minecraft will report missing dependencies:", color = CfMuted, fontSize = 12.sp)
+                            vm.deps.forEach { d ->
+                                TextButton(onClick = { vm.open(d) }) { Text("${d.title}  \u203a", color = CfText) }
+                            }
+                        }
+                    }
+                }
+                val hint = remember(vm.descText, files) { if (m.source == Source.MCPEDL) dependencyHint(vm.descText ?: m.summary, files?.map { it.name } ?: emptyList()) else null }
+                if (hint != null) {
+                    Spacer(Modifier.height(16.dp))
+                    Surface(shape = RoundedCornerShape(10.dp), color = CfSurface2) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("Heads up: this may need other packs", color = CfOrange, fontWeight = FontWeight.SemiBold)
+                            Text(hint, color = CfMuted, fontSize = 12.sp)
                         }
                     }
                 }

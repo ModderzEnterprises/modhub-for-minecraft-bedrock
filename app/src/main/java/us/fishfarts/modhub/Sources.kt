@@ -49,7 +49,7 @@ val http: OkHttpClient = OkHttpClient.Builder()
     .build()
 
 // Identify honestly (the sites answer this fine): no pretending to be a browser.
-const val UA = "ModHub/1.6 (open-source Minecraft Bedrock addon browser)"
+const val UA = "ModHub/1.8 (open-source Minecraft Bedrock addon browser)"
 
 private fun get(url: String, headers: Map<String, String> = emptyMap()): String {
     val b = Request.Builder().url(url).header("User-Agent", UA)
@@ -233,6 +233,21 @@ object CurseForge {
             .asJsonObject.get("data").asString
     }
 
+    /** Required dependencies (relationType 3) of the newest file, as full mod entries so the app can open them. */
+    suspend fun requiredDeps(modId: String, key: String): List<ModItem> = withContext(Dispatchers.IO) {
+        val h = mapOf("x-api-key" to key, "Accept" to "application/json")
+        val root = JsonParser.parseString(get("$API/mods/$modId/files?pageSize=1", h)).asJsonObject
+        val ids = root.get("data").arr().firstOrNull()?.asJsonObject?.get("dependencies")?.arr()
+            ?.map { it.asJsonObject }?.filter { it.lng("relationType") == 3L }?.map { it.lng("modId") }?.distinct()?.take(6) ?: emptyList()
+        ids.mapNotNull { id ->
+            runCatching {
+                val o = JsonParser.parseString(get("$API/mods/$id", h)).asJsonObject.get("data").asJsonObject
+                val arr = JsonArray().also { it.add(o) }
+                parse(arr).first()
+            }.getOrNull()
+        }
+    }
+
     suspend fun files(modId: String, key: String): List<ModFile> = withContext(Dispatchers.IO) {
         val root = JsonParser.parseString(
             get("$API/mods/$modId/files?pageSize=10", mapOf("x-api-key" to key, "Accept" to "application/json"))
@@ -362,5 +377,20 @@ fun latestGroup(files: List<ModFile>): List<ModFile> {
         (first.group.isNotBlank() && f.group == first.group) ||
             (first.group.isBlank() && t0 != null && mins(f.date)?.let { kotlin.math.abs(it - t0) <= 30 } == true) ||
             f === first
+    }
+}
+
+/** MCPEDL has no dependency data, so surface what the author wrote plus file-name clues. Heuristic: a hint, never a guarantee. */
+fun dependencyHint(description: String?, fileNames: List<String>): String? {
+    val hits = (description ?: "").split(Regex("(?<=[.!?])\\s+|\\n+"))
+        .map { it.trim() }
+        .filter { it.length in 12..220 && Regex("""(?i)\b(requires?|required|dependenc\w*|prerequisite|must (have|install)|install (all|the base|this first|first)|activation order|base (pack|addon|add-on)|resource packs?)\b""").containsMatchIn(it) }
+        .distinct().take(3)
+    val addOnLike = Regex("""(?i)(3d|anime|resource|textures?|\brp\b|skins?)""")
+    val mixed = fileNames.any { addOnLike.containsMatchIn(it) } && fileNames.any { !addOnLike.containsMatchIn(it) }
+    if (hits.isEmpty() && !mixed) return null
+    return buildString {
+        if (hits.isNotEmpty()) append("The author mentions: ").append(hits.joinToString(" / ") { "\u201c$it\u201d" })
+        if (mixed) { if (isNotEmpty()) append("\n"); append("Some files here look like add-ons for the base pack. Install the base file first, then the extras.") }
     }
 }
