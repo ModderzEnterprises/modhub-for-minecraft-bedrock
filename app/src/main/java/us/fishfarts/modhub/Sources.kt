@@ -49,7 +49,7 @@ val http: OkHttpClient = OkHttpClient.Builder()
     .build()
 
 // Identify honestly (the sites answer this fine): no pretending to be a browser.
-const val UA = "ModHub/1.8 (open-source Minecraft Bedrock addon browser)"
+const val UA = "ModHub/1.9 (open-source Minecraft Bedrock addon browser)"
 
 private fun get(url: String, headers: Map<String, String> = emptyMap()): String {
     val b = Request.Builder().url(url).header("User-Agent", UA)
@@ -246,6 +246,26 @@ object CurseForge {
                 parse(arr).first()
             }.getOrNull()
         }
+    }
+
+    /** Strip what phone keyboards and copy/paste add around a key: spaces, line breaks, quotes, zero-width characters. */
+    fun cleanKey(k: String) = k.filter { !it.isWhitespace() && it != '"' && it != '\'' && it != '\u200B' && it != '\uFEFF' && it != '\u2019' && it != '\u201C' && it != '\u201D' }
+
+    /** Plain-language result of asking CurseForge whether this key works. */
+    suspend fun checkKey(raw: String): String = withContext(Dispatchers.IO) {
+        val key = cleanKey(raw)
+        if (key.isBlank()) return@withContext "Paste your key first."
+        if (!key.startsWith("\$2")) return@withContext "That doesn't look like a CurseForge key. They start with \$2a\$10\$ and are about 60 characters. Yours is ${key.length}."
+        try {
+            get("$API/games/$BEDROCK_GAME_ID", mapOf("x-api-key" to key, "Accept" to "application/json"))
+            "\u2713 Key works."
+        } catch (e: IllegalStateException) {
+            val m = e.message ?: ""
+            when {
+                "403" in m || "401" in m -> "CurseForge rejected this key (${m.substringAfter("HTTP ").substringBefore(' ')}). Key length here: ${key.length} (a real one is about 60). Copy it again from console.curseforge.com > API keys."
+                else -> "Couldn't check: $m"
+            }
+        } catch (e: Exception) { "Couldn't reach CurseForge: ${e.message}" }
     }
 
     suspend fun files(modId: String, key: String): List<ModFile> = withContext(Dispatchers.IO) {

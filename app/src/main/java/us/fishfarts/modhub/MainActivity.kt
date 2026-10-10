@@ -108,7 +108,7 @@ class ModVm(app: Application) : AndroidViewModel(app) {
 
     init { search() }
 
-    fun setKey(k: String) { cfKey = k.trim(); prefs.edit().putString("cf_key", cfKey).apply(); search() }
+    fun setKey(k: String) { cfKey = CurseForge.cleanKey(k); prefs.edit().putString("cf_key", cfKey).apply(); search() }
     fun toggle(s: Source) {
         enabled = if (s in enabled && enabled.size > 1) enabled - s else enabled + s
         prefs.edit().putStringSet("sources", enabled.map { it.name }.toSet()).apply()
@@ -333,7 +333,7 @@ fun HomeScreen(vm: ModVm, openSettings: () -> Unit) {
         }
         if (Source.MODRINTH in vm.enabled) {
             Text(
-                "Modrinth is Java-only; its results can't be installed into Bedrock.",
+                "Modrinth is mostly Java mods, which can't be installed into Bedrock. Leave it off unless you are curious.",
                 color = CfMuted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
@@ -541,6 +541,8 @@ fun DetailScreen(vm: ModVm) {
 @Composable
 fun SettingsDialog(vm: ModVm, onDismiss: () -> Unit) {
     var key by remember { mutableStateOf(vm.cfKey) }
+    var keyMsg by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CfSurface,
@@ -549,7 +551,11 @@ fun SettingsDialog(vm: ModVm, onDismiss: () -> Unit) {
             Column {
                 Text("CurseForge API key (free at console.curseforge.com). Stored only on this phone.", color = CfMuted, fontSize = 13.sp)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(value = key, onValueChange = { key = it }, singleLine = true, label = { Text("API key") })
+                OutlinedTextField(value = key, onValueChange = { key = it; keyMsg = null }, singleLine = true, label = { Text("API key") })
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { keyMsg = "Checking\u2026"; scope.launch { keyMsg = CurseForge.checkKey(key) } }) { Text("Test key", color = CfOrange) }
+                    keyMsg?.let { Text(it, color = if (it.startsWith("\u2713")) CfText else CfMuted, fontSize = 12.sp, lineHeight = 16.sp) }
+                }
                 Spacer(Modifier.height(16.dp))
                 val ctx = androidx.compose.ui.platform.LocalContext.current
                 val canOverlay = android.provider.Settings.canDrawOverlays(ctx)
