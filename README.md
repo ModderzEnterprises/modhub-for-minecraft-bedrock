@@ -1,6 +1,6 @@
 # ModHub for Minecraft Bedrock
 
-**Browse addons, maps, texture packs and skins from MCPEDL, CurseForge and Modrinth in one place, and send them to Minecraft Bedrock with one tap.**
+**Browse addons, maps, texture packs and skins from MCPEDL and CurseForge in one place, and send them to Minecraft Bedrock with one tap.**
 
 Free. Open source. No ads, no accounts, no analytics.
 
@@ -16,8 +16,9 @@ Free. Open source. No ads, no accounts, no analytics.
 
 ## Features
 
-- Search MCPEDL, CurseForge and (optionally) Modrinth at once; duplicates are merged.
-- Home page shows the top 100 per category: Most popular, Newest, Relevance.
+- Search MCPEDL and CurseForge at once; duplicates are merged. Searching several words matches each word.
+- Home page shows the top 100 per category: Most popular (across the whole MCPEDL catalogue), Newest, Relevance. It refreshes itself and has a refresh button and pull-down-to-refresh.
+- **Import file** button for packs you downloaded yourself (for example from a CurseForge page whose author doesn't allow other apps to download it).
 - Filters for Addons, Maps, Textures, Skins and more.
 - Full descriptions, screenshots, version picker, and an "installed" marker.
 - One-tap **Install to Minecraft**: downloads the file and hands it to Minecraft to import.
@@ -30,7 +31,7 @@ Free. Open source. No ads, no accounts, no analytics.
 2. (Optional) Verify the file against `SHA256SUMS.txt` from the release. Release signing certificate SHA-256:
    `D5:5C:8B:F3:67:85:59:AA:90:60:5F:63:B1:4A:B3:A6:A7:C5:80:CC:D4:2C:6C:BC:0E:FC:FA:85:C1:3E:CE:9F`
 3. Open ModHub and read the first-run note. It explains every permission.
-4. Requires Android 9+ and Minecraft Bedrock (`com.mojang.minecraftpe`) installed.
+4. Requires Android 9+ and Minecraft Bedrock (`com.mojang.minecraftpe`) installed **and signed in to Google Play with the account that owns it**. If Minecraft sends you to the Play Store when ModHub opens a file, nothing is imported.
 
 ### Optional: automatic restart
 
@@ -54,7 +55,11 @@ Tips:
 
 **Is it safe?** The source is here, there are no trackers, and the app only talks to the sites you search. The permissions are explained in-app and in [PRIVACY.md](PRIVACY.md).
 
-**Why are some CurseForge mods missing a download button?** Their authors opted out of third-party downloads. ModHub respects that and offers "Open website" instead.
+**Why are some CurseForge mods missing a download button?** Their authors opted out of third-party downloads. ModHub respects that and offers "Open website" instead. Download the file there yourself, then tap **Import file** in ModHub and pick it.
+
+**Why can't I search CurseForge by name?** CurseForge limits search for newly created API keys. ModHub then shows CurseForge's popular and featured lists and keeps searching MCPEDL normally.
+
+**What about Modrinth?** Modrinth has no Minecraft Bedrock section (almost everything is a Java mod), so ModHub no longer lists it.
 
 **Why isn't it on Google Play?** Accessibility-based helpers are hard to get approved, and this is a hobby project.
 

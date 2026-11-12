@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.13
+- New **Import file** button (home screen and mod pages): pick a `.mcpack`, `.mcaddon`, `.mcworld` or `.mctemplate` you downloaded yourself and ModHub imports it and restarts Minecraft like a normal install. Use it for mods whose author doesn't allow other apps to download them.
+- Clearer message for those mods: "Open website", download there, then "Import file".
+- Modrinth removed from the app (it has no Bedrock content).
+- The finished-import card now reminds you to sign in to Google Play if Minecraft sent you there instead.
+
+## 1.12
+- "Most popular" now covers the whole MCPEDL catalogue (up to 10,000 mods), not just the most recently updated ones, so big older mods such as Twixxel's Stalkers show up. Loads in the background and is cached on the phone.
+- CurseForge home lists go deeper: 400 most popular and 200 newest per category (needs a working API key).
+- Home lists refresh by themselves every 30 minutes and when you return to the app; there is a refresh button and pull-down-to-refresh.
+- Multi-word searches match each word (for example "stalker inspiration"), ranked by how many words match.
+
 ## 1.11
 - Restart timing option in Settings: Safe (default, waits 15-45 s so Minecraft finishes unpacking), Fast (old behaviour) or Ask me (notification). Fixes the restart cutting imports short on some phones.
 

@@ -176,14 +176,17 @@ class ImportService : Service() {
 class ReadWatcher(private val file: File) {
     @Volatile private var opened = 0
     @Volatile private var closed = 0
+    @Volatile private var accessed = 0
     @Volatile private var last = 0L
     @Suppress("DEPRECATION")
     private val obs = object : FileObserver(file.path, OPEN or ACCESS or CLOSE_NOWRITE) {
         override fun onEvent(event: Int, path: String?) {
             last = System.currentTimeMillis()
-            when (event and ALL_EVENTS) { OPEN -> opened++; CLOSE_NOWRITE -> closed++ }
+            when (event and ALL_EVENTS) { OPEN -> opened++; CLOSE_NOWRITE -> closed++; ACCESS -> accessed++ }
         }
     }
+    /** True once Minecraft actually read bytes from the file (an open that is never followed by a read means it bailed out). */
+    fun didRead() = accessed > 0
     fun start() { obs.startWatching() }
     fun stop() { obs.stopWatching() }
 

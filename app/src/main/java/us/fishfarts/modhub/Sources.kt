@@ -49,7 +49,7 @@ val http: OkHttpClient = OkHttpClient.Builder()
     .build()
 
 // Identify honestly (the sites answer this fine): no pretending to be a browser.
-const val UA = "ModHub/1.11 (open-source Minecraft Bedrock addon browser)"
+const val UA = "ModHub/1.13 (open-source Minecraft Bedrock addon browser)"
 
 private fun get(url: String, headers: Map<String, String> = emptyMap()): String {
     val b = Request.Builder().url(url).header("User-Agent", UA)
@@ -94,30 +94,43 @@ object Mcpedl {
      * Home lists. mcpedl cannot sort server-side (its search ignores every sort option and returns 20 per page, most recently
      * updated first), so pull [pages] pages in parallel plus its own popular shelves and let the app sort them locally.
      */
-    suspend fun browse(cat: Category, pages: Int = 10): List<ModItem> = coroutineScope {
-        val sem = Semaphore(5)
+    /** MCPEDL's index only lets you page to 500 (10,000 mods); pages come back most-recently-updated first. */
+    const val MAX_PAGE = 500
+
+    /** Fetch pages [from]..[to] in parallel. Failed pages are skipped (past the last page of a category they simply error). */
+    suspend fun browseRange(cat: Category, from: Int, to: Int): List<ModItem> = coroutineScope {
+        val sem = Semaphore(8)
         val type = cat.typeId?.let { "&type_id=$it" } ?: ""
-        var failures = 0
-        val jobs = (1..pages).map { p ->
+        (from..minOf(to, MAX_PAGE)).map { p ->
             async(Dispatchers.IO) {
                 sem.withPermit {
                     runCatching { parse(JsonParser.parseString(get("$API/search/advanced?page=$p$type", json)).asJsonObject.get("results").arr()) }
-                        .getOrElse { failures++; emptyList() }
+                        .getOrElse { emptyList() }
                 }
             }
-        }
-        val shelf = async(Dispatchers.IO) {
-            runCatching {
-                val root = JsonParser.parseString(get("$API/search/frontpage/v2", json)).asJsonObject
-                root.getAsJsonObject("shelves").getAsJsonObject("popular").entrySet()
-                    .filter { cat.shelf == null || it.key == cat.shelf }
-                    .flatMap { parse(it.value.asJsonObject.get("results").arr()) }
-            }.getOrDefault(emptyList())
-        }
-        val all = (jobs.awaitAll().flatten() + shelf.await()).distinctBy { it.id }
-        if (all.isEmpty()) error("MCPEDL didn't answer ($failures of $pages requests failed)")
+        }.awaitAll().flatten()
+    }
+
+    /** MCPEDL's own popular shelves (a handful of the all-time biggest). */
+    suspend fun shelf(cat: Category): List<ModItem> = withContext(Dispatchers.IO) {
+        runCatching {
+            val root = JsonParser.parseString(get("$API/search/frontpage/v2", json)).asJsonObject
+            root.getAsJsonObject("shelves").getAsJsonObject("popular").entrySet()
+                .filter { cat.shelf == null || it.key == cat.shelf }
+                .flatMap { parse(it.value.asJsonObject.get("results").arr()) }
+        }.getOrDefault(emptyList())
+    }
+
+    /** Quick first screen: the newest [pages] pages plus the shelves. [deepen] then fills in the rest in the background. */
+    suspend fun browse(cat: Category, pages: Int = 40): List<ModItem> = coroutineScope {
+        val shelf = async { shelf(cat) }
+        val all = (browseRange(cat, 1, pages) + shelf.await()).distinctBy { it.id }
+        if (all.isEmpty()) error("MCPEDL didn't answer")
         all
     }
+
+    /** Pages 41..500: this is what lets big mods that were not updated recently show up in "Most popular". */
+    suspend fun deepen(cat: Category): List<ModItem> = browseRange(cat, 41, MAX_PAGE)
 
     suspend fun search(q: String, page: Int = 1, cat: Category = Category.ALL): List<ModItem> = withContext(Dispatchers.IO) {
         if (q.isBlank()) return@withContext if (page > 1) emptyList() else browse(cat)
@@ -181,14 +194,20 @@ object CurseForge {
      */
     suspend fun browse(cat: Category, key: String): List<ModItem> = coroutineScope {
         if (key.isBlank() || searchRestricted) return@coroutineScope emptyList<ModItem>()
+        val sem = Semaphore(4)
         val classes = if (cat == Category.ALL) classIds.values.toList() else listOfNotNull(classIds[cat])
-        val indices = if (cat == Category.ALL) listOf(0) else listOf(0, 50)
-        val jobs = classes.flatMap { cid -> listOf(2, 11).flatMap { sortField -> indices.map { idx -> Triple(cid, sortField, idx) } } }.map { (cid, sf, idx) ->
+        // Popularity (sortField 2): 400 deep per class. Newest (sortField 11, release date): 200 deep. 50 per request.
+        val plan = classes.flatMap { cid ->
+            (0 until 400 step 50).map { Triple(cid, 2, it) } + (0 until 200 step 50).map { Triple(cid, 11, it) }
+        }
+        val jobs = plan.map { (cid, sf, idx) ->
             async(Dispatchers.IO) {
-                runCatching {
-                    val url = "$API/mods/search?gameId=$BEDROCK_GAME_ID&classId=$cid&sortField=$sf&sortOrder=desc&pageSize=50&index=$idx"
-                    parse(JsonParser.parseString(get(url, mapOf("x-api-key" to key, "Accept" to "application/json"))).asJsonObject.get("data").arr())
-                }.getOrElse { if (it.message?.contains("403") == true) searchRestricted = true; emptyList() }
+                sem.withPermit {
+                    runCatching {
+                        val url = "$API/mods/search?gameId=$BEDROCK_GAME_ID&classId=$cid&sortField=$sf&sortOrder=desc&pageSize=50&index=$idx"
+                        parse(JsonParser.parseString(get(url, mapOf("x-api-key" to key, "Accept" to "application/json"))).asJsonObject.get("data").arr())
+                    }.getOrElse { if (it.message?.contains("403") == true) searchRestricted = true; emptyList() }
+                }
             }
         }
         jobs.awaitAll().flatten().distinctBy { it.id }
@@ -288,7 +307,7 @@ object CurseForge {
             if (dl.isBlank()) { blocked++; return@mapNotNull null }
             ModFile(name, dl, f.str("displayName"))
         }
-        if (out.isEmpty() && blocked > 0) error("The author of this mod doesn't allow downloads outside CurseForge. Use \"Open website\" to get it there.")
+        if (out.isEmpty() && blocked > 0) error("The author of this mod doesn't allow other apps to download it. Tap \"Open website\", download it there yourself, then tap \"Import file\" and pick the file.")
         out
     }
 }
@@ -330,25 +349,39 @@ data class SearchResult(val items: List<ModItem>, val errors: Map<Source, String
 /** Queries every enabled source at once and merges the answers (de-duplicated) into one list. */
 suspend fun searchAll(q: String, cfKey: String, enabled: Set<Source>, page: Int = 1, cat: Category = Category.ALL): SearchResult = coroutineScope {
     val errors = mutableMapOf<Source, String>()
-    val jobs = enabled.map { s ->
+    // Multi-word search: the sites match words loosely or all-at-once, so also search each word on its own and rank locally.
+    val words = searchWords(q)
+    val queries = if (words.size >= 2) listOf(q) + words else listOf(q)
+    val jobs: List<kotlinx.coroutines.Deferred<Pair<Source, Result<List<ModItem>>>>> = enabled.flatMap { s -> queries.map { qq ->
         async {
-            s to runCatching {
+            s to runCatching<List<ModItem>> {
                 when (s) {
-                    Source.MCPEDL -> Mcpedl.search(q, page, cat)
-                    Source.CURSEFORGE -> CurseForge.search(q, cfKey, page, cat)
-                    Source.MODRINTH -> if (cat == Category.ALL || cat == Category.ADDONS) Modrinth.search(q, page) else emptyList()
+                    Source.MCPEDL -> Mcpedl.search(qq, page, cat)
+                    Source.CURSEFORGE -> CurseForge.search(qq, cfKey, page, cat)
+                    Source.MODRINTH -> if (cat == Category.ALL || cat == Category.ADDONS) Modrinth.search(qq, page) else emptyList()
                 }
             }
         }
-    }
+    } }
     val all = mutableListOf<ModItem>()
-    jobs.awaitAll().forEach { (s, r) ->
-        r.onSuccess { all += it }.onFailure { errors[s] = it.message ?: "failed" }
+    val ok = HashSet<Source>(); val failed = mutableMapOf<Source, String>()
+    for ((s, r) in jobs.awaitAll()) {
+        r.onSuccess { list: List<ModItem> -> all += list; ok += s }.onFailure { e: Throwable -> failed[s] = e.message ?: "failed" }
     }
+    failed.forEach { (s, m) -> if (s !in ok) errors[s] = m }   // only an error when every query to that site failed
     // De-dupe: MCPEDL mirrors CurseForge, so the same addon often appears twice. Keep the richer / first copy.
     fun key(t: String) = t.lowercase().filter { c -> c.isLetterOrDigit() }
     // Keep each source's own (relevance) order; the app applies the user's chosen sort afterwards.
-    val merged = if (q.isBlank()) {
+    val merged = if (q.isNotBlank() && words.size >= 2) {
+        val seen = HashSet<String>()
+        val unique = all.filter { seen.add(it.source.name + ":" + it.id) }
+        // Score = how many of the typed words appear in title/summary/author; best matches first, ties by downloads.
+        fun score(m: ModItem): Int { val h = key(m.title + " " + m.summary + " " + m.author); return words.count { h.contains(key(it)) } }
+        val byTitle = HashSet<String>()
+        unique.map { it to score(it) }.filter { it.second > 0 }
+            .sortedWith(compareByDescending<Pair<ModItem, Int>> { it.second }.thenByDescending { it.first.downloads })
+            .map { it.first }.filter { byTitle.add(key(it.title) + key(it.author)) }
+    } else if (q.isBlank()) {
         // Home lists: the same addon on two sites keeps the copy with more downloads.
         val best = all.groupBy { key(it.title) }.mapValues { (_, v) -> v.maxByOrNull { it.downloads }!! }
         val seen = HashSet<String>()
@@ -419,4 +452,37 @@ fun dependencyHint(description: String?, fileNames: List<String>): String? {
         if (hits.isNotEmpty()) append("The author mentions: ").append(hits.joinToString(" / ") { "\u201c$it\u201d" })
         if (mixed) { if (isNotEmpty()) append("\n"); append("Some files here look like add-ons for the base pack. Install the base file first, then the extras.") }
     }
+}
+
+private val stopWords = setOf("the", "a", "an", "of", "and", "for", "mod", "mods", "addon", "addons", "add-on", "by", "in", "to")
+/** The words of a search that carry meaning (lower-case, punctuation like the apostrophe in "don't" dropped). */
+fun searchWords(q: String): List<String> =
+    q.lowercase().split(Regex("\\s+")).map { it.filter { c -> c.isLetterOrDigit() } }.filter { it.length >= 2 && it !in stopWords }.distinct()
+
+/** On-disk copy of the big MCPEDL catalogue pull, so "Most popular" is complete instantly on the next launch. */
+object DiskPool {
+    private data class Snap(val time: Long, val items: List<ModItem>)
+    private fun file(ctx: android.content.Context, cat: Category) = java.io.File(ctx.cacheDir, "pool_mcpedl_${cat.name}.json")
+
+    fun load(ctx: android.content.Context, cat: Category): Pair<Long, List<ModItem>>? = runCatching {
+        val f = file(ctx, cat); if (!f.exists()) return null
+        val snap = com.google.gson.Gson().fromJson(f.readText(), Snap::class.java)
+        if (snap?.items == null) null else snap.time to snap.items
+    }.getOrNull()
+
+    fun save(ctx: android.content.Context, cat: Category, items: List<ModItem>) {
+        runCatching {
+            val slim = items.map { it.copy(summary = it.summary.take(160), files = null) }
+            file(ctx, cat).writeText(com.google.gson.Gson().toJson(Snap(System.currentTimeMillis(), slim)))
+        }
+    }
+}
+
+/** Same addon on two sites (or the same title twice) keeps the copy with more downloads. */
+fun dedupeHome(list: List<ModItem>): List<ModItem> {
+    fun key(t: String) = t.lowercase().filter { c -> c.isLetterOrDigit() }
+    val best = HashMap<String, ModItem>()
+    for (m in list) { val k = key(m.title); val cur = best[k]; if (cur == null || m.downloads > cur.downloads) best[k] = m }
+    val seen = HashSet<String>()
+    return list.map { best.getValue(key(it.title)) }.filter { seen.add("${it.source}:${it.id}") }
 }

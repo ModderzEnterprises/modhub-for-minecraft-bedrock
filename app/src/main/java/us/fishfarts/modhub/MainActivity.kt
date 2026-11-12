@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +38,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Job
+import java.io.File
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -49,12 +55,13 @@ val CfText = androidx.compose.ui.graphics.Color(0xFFEDEDED)
 val CfMuted = androidx.compose.ui.graphics.Color(0xFF9A9A9A)
 
 class ModVm(app: Application) : AndroidViewModel(app) {
+    private val appCtx: Context = app
     private val prefs = app.getSharedPreferences("modhub", Context.MODE_PRIVATE)
     var cfKey by mutableStateOf(prefs.getString("cf_key", "") ?: "")
         private set
     var enabled by mutableStateOf(
-        (prefs.getStringSet("sources", null) ?: setOf(Source.MCPEDL.name, Source.CURSEFORGE.name))
-            .mapNotNull { runCatching { Source.valueOf(it) }.getOrNull() }.toSet()
+        ((prefs.getStringSet("sources", null) ?: setOf(Source.MCPEDL.name, Source.CURSEFORGE.name))
+            .mapNotNull { runCatching { Source.valueOf(it) }.getOrNull() }.toSet() - Source.MODRINTH).ifEmpty { setOf(Source.MCPEDL, Source.CURSEFORGE) }
     )
         private set
     var query by mutableStateOf("")
@@ -106,7 +113,50 @@ class ModVm(app: Application) : AndroidViewModel(app) {
         prefs.edit().putStringSet("installed", HashSet(installed)).commit()   // commit: survive the process being killed right after
     }
 
-    init { search() }
+    var deepLoading by mutableStateOf(false)
+    private var deepJob: Job? = null
+    private var lastHomeRefresh = 0L
+
+    init {
+        search()
+        // New mods show up by themselves: re-pull the home lists every 30 minutes while the app is open.
+        viewModelScope.launch { while (true) { delay(30 * 60_000L); refreshIfStale() } }
+    }
+
+    /** Drop every cache and reload (pull-to-refresh / the refresh button). */
+    fun refresh() {
+        homeCache.clear()
+        lastHomeRefresh = 0L
+        deepJob?.cancel(); deepLoading = false
+        search(force = true)
+    }
+    fun refreshIfStale() {
+        if (query.isBlank() && selected == null && System.currentTimeMillis() - lastHomeRefresh > 30 * 60_000L) refresh()
+    }
+
+    /** Pages 41-500 of MCPEDL in the background: cached copy first (instant), then a fresh pull when it is older than 30 min. */
+    private fun deepen(cat: Category, force: Boolean) {
+        if (Source.MCPEDL !in enabled) return
+        deepJob?.cancel()
+        deepJob = viewModelScope.launch {
+            fun mergeIn(items: List<ModItem>) {
+                if (query.isNotBlank() || category != cat) return
+                raw = dedupeHome(raw + items); applySort()
+            }
+            val disk = withContext(Dispatchers.IO) { DiskPool.load(appCtx, cat) }
+            if (disk != null) mergeIn(disk.second)
+            val age = System.currentTimeMillis() - (disk?.first ?: 0L)
+            if (force || disk == null || age > 30 * 60_000L) {
+                deepLoading = true
+                val fresh = runCatching { Mcpedl.deepen(cat) }.getOrDefault(emptyList())
+                if (fresh.isNotEmpty()) {
+                    mergeIn(fresh)
+                    withContext(Dispatchers.IO) { DiskPool.save(appCtx, cat, fresh + (disk?.second ?: emptyList())) }
+                }
+                deepLoading = false
+            }
+        }
+    }
 
     fun setKey(k: String) { cfKey = CurseForge.cleanKey(k); prefs.edit().putString("cf_key", cfKey).apply(); search() }
     fun toggle(s: Source) {
@@ -127,15 +177,16 @@ class ModVm(app: Application) : AndroidViewModel(app) {
     }
     fun chooseSort(s: Sort) { sort = s; prefs.edit().putString("sort", s.name).apply(); applySort() }
 
-    fun search() {
+    fun search(force: Boolean = false) {
         job?.cancel()
         job = viewModelScope.launch {
             loading = true; page = 1
             val q = query.trim()
             val ck = "${category.name}|${enabled.sorted()}|${cfKey.isNotBlank()}"
-            val cached = if (q.isBlank()) homeCache[ck]?.takeIf { System.currentTimeMillis() - it.first < 60 * 60_000 } else null
+            val cached = if (q.isBlank()) homeCache[ck]?.takeIf { !force && System.currentTimeMillis() - it.first < 30 * 60_000 } else null
             val r = cached?.second ?: searchAll(q, cfKey, enabled, 1, category).also { if (q.isBlank() && it.items.isNotEmpty()) homeCache[ck] = System.currentTimeMillis() to it }
             raw = r.items; applySort(); errors = r.errors; loading = false
+            if (q.isBlank()) { lastHomeRefresh = System.currentTimeMillis(); deepen(category, force) } else { deepJob?.cancel(); deepLoading = false }
             hasMore = q.isNotBlank() && r.items.size >= 10
         }
     }
@@ -173,6 +224,19 @@ class ModVm(app: Application) : AndroidViewModel(app) {
     }
     fun close() { selected = null }
 
+    /** Hands [files] to the import service and waits for its verdict. Returns the service's result string. */
+    private suspend fun runImport(files: List<File>, world: Boolean): String = coroutineScope {
+        val ctx = getApplication<Application>()
+        ImportBus.status.value = null; ImportBus.result.value = null
+        androidx.core.content.ContextCompat.startForegroundService(ctx, android.content.Intent(ctx, ImportService::class.java)
+            .putExtra("paths", files.map { it.absolutePath }.toTypedArray())
+            .putExtra("isWorld", world))
+        val watcher = launch { ImportBus.status.collect { t -> if (t != null) status = t } }
+        val res = ImportBus.result.first { it != null } ?: "error: no result"
+        watcher.cancel()
+        res
+    }
+
     fun installViaMinecraft(showSteps: Boolean = false) {
         val item = selected ?: return
         val f = files ?: return
@@ -183,13 +247,7 @@ class ModVm(app: Application) : AndroidViewModel(app) {
             val ctx = getApplication<Application>()
             try {
                 val dl = Installer.download(ctx, todo) { status = it }
-                ImportBus.status.value = null; ImportBus.result.value = null
-                androidx.core.content.ContextCompat.startForegroundService(ctx, android.content.Intent(ctx, ImportService::class.java)
-                    .putExtra("paths", dl.map { it.absolutePath }.toTypedArray())
-                    .putExtra("isWorld", todo.all { isWorldFile(it) }))
-                val watcher = launch { ImportBus.status.collect { t -> if (t != null) status = t } }
-                val res = ImportBus.result.first { it != null } ?: "error: no result"
-                watcher.cancel()
+                val res = runImport(dl, todo.all { isWorldFile(it) })
                 if (res.startsWith("error")) { status = "Failed: ${res.removePrefix("error: ")}"; return@launch }
                 markInstalled(item)
                 if (showSteps) stepsOpen = true
@@ -198,6 +256,33 @@ class ModVm(app: Application) : AndroidViewModel(app) {
             } finally {
                 installing = false
             }
+        }
+    }
+
+    /** For packs you downloaded yourself (for example from a website whose author doesn't allow other apps to fetch it). */
+    fun importLocalFile(uri: android.net.Uri) {
+        if (installing) return
+        viewModelScope.launch {
+            installing = true
+            val ctx = getApplication<Application>()
+            try {
+                val name = withContext(Dispatchers.IO) {
+                    ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                } ?: "imported.mcpack"
+                if (!isInstallable(name)) { status = "Failed: that isn't a Minecraft pack (.mcpack, .mcaddon, .mcworld or .mctemplate)."; return@launch }
+                val dir = File(ctx.cacheDir, "dl").apply { mkdirs() }
+                dir.listFiles()?.forEach { it.delete() }
+                val out = File(dir, name.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+                status = "Copying $name\u2026"
+                withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { i -> out.outputStream().use { i.copyTo(it) } } }
+                if (out.length() < 64) error("The file is empty")
+                val res = runImport(listOf(out), out.name.lowercase().let { it.endsWith(".mcworld") || it.endsWith(".mctemplate") })
+                if (res.startsWith("error")) { status = "Failed: ${res.removePrefix("error: ")}"; return@launch }
+                if (!isWorldFile(ModFile(out.name, ""))) stepsOpen = true
+            } catch (e: Exception) {
+                status = "Failed: ${e.message}"
+            } finally { installing = false }
         }
     }
 }
@@ -242,6 +327,12 @@ fun App(vm: ModVm = viewModel()) {
             notifPerm.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
     BackHandler(vm.selected != null) { vm.close() }
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) vm.refreshIfStale() }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
     if (vm.selected != null) DetailScreen(vm) else HomeScreen(vm) { showSettings = true }
     if (showSettings) SettingsDialog(vm) { showSettings = false }
     if (vm.stepsOpen) GuidedStepsDialog { vm.stepsOpen = false }
@@ -261,6 +352,9 @@ fun HomeScreen(vm: ModVm, openSettings: () -> Unit) {
             Text("ModHub", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = CfText)
             Text("  for Minecraft Bedrock", fontSize = 12.sp, color = CfMuted)
             Spacer(Modifier.weight(1f))
+            val pickFile = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.importLocalFile(uri) }
+            IconButton(onClick = { pickFile.launch(arrayOf("*/*")) }) { Icon(Icons.Filled.FileOpen, "Import a file I downloaded", tint = CfMuted) }
+            IconButton(onClick = { vm.refresh() }) { Icon(Icons.Filled.Refresh, "Refresh", tint = CfMuted) }
             IconButton(onClick = openSettings) { Icon(Icons.Filled.Settings, "Settings", tint = CfMuted) }
         }
         OutlinedTextField(
@@ -281,9 +375,10 @@ fun HomeScreen(vm: ModVm, openSettings: () -> Unit) {
                 focusedBorderColor = CfOrange, unfocusedBorderColor = CfSurface2,
             ),
         )
+        vm.status?.let { st -> if (vm.installing || st.startsWith("Failed")) Text(st, color = CfOrange, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) }
         // horizontalScroll: FilterChip rows silently clip without it on narrow phones.
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Source.values().forEach { s ->
+            Source.values().filter { it != Source.MODRINTH }.forEach { s ->
                 FilterChip(
                     selected = s in vm.enabled, onClick = { vm.toggle(s) }, label = { Text(s.label) },
                     colors = FilterChipDefaults.filterChipColors(
@@ -331,12 +426,6 @@ fun HomeScreen(vm: ModVm, openSettings: () -> Unit) {
                 color = CfMuted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
-        if (Source.MODRINTH in vm.enabled) {
-            Text(
-                "Modrinth is mostly Java mods, which can't be installed into Bedrock. Leave it off unless you are curious.",
-                color = CfMuted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp),
-            )
-        }
         if (Source.CURSEFORGE in vm.enabled && vm.cfKey.isBlank()) {
             Text(
                 "CurseForge needs an API key - tap the gear to add it.",
@@ -347,10 +436,14 @@ fun HomeScreen(vm: ModVm, openSettings: () -> Unit) {
             Text("${s.label}: $e", color = CfMuted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp))
         }
         Spacer(Modifier.height(6.dp))
-        Box(Modifier.fillMaxSize()) {
+        val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+        if (pull.isRefreshing) LaunchedEffect(true) { vm.refresh() }
+        LaunchedEffect(vm.loading) { if (!vm.loading) pull.endRefresh() }
+        Box(Modifier.fillMaxSize().nestedScroll(pull.nestedScrollConnection)) {
             LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (vm.query.isBlank() && vm.items.isNotEmpty()) item {
-                    Text("Top ${vm.items.size} " + (if (vm.category == Category.ALL) "of everything" else vm.category.label.lowercase()) + " - " + vm.sort.label.lowercase(), color = CfMuted, fontSize = 12.sp)
+                    Text("Top ${vm.items.size} " + (if (vm.category == Category.ALL) "of everything" else vm.category.label.lowercase()) + " - " + vm.sort.label.lowercase() +
+                        (if (vm.deepLoading) "  (still loading the rest of the catalog\u2026)" else ""), color = CfMuted, fontSize = 12.sp)
                 }
                 items(vm.items, key = { "${it.source}:${it.id}" }) { ModCard(it, vm.isInstalled(it)) { vm.open(it) } }
                 if (vm.hasMore) item {
@@ -364,6 +457,7 @@ fun HomeScreen(vm: ModVm, openSettings: () -> Unit) {
                 }
             }
             if (vm.loading) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter), color = CfOrange)
+            androidx.compose.material3.pulltorefresh.PullToRefreshContainer(state = pull, modifier = Modifier.align(Alignment.TopCenter), containerColor = CfSurface, contentColor = CfOrange)
         }
     }
 }
@@ -507,6 +601,8 @@ fun DetailScreen(vm: ModVm) {
                     if (m.webUrl.isNotBlank()) OutlinedButton(onClick = {
                         ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(m.webUrl)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                     }) { Text("Open website", color = CfText) }
+                    val pickDl = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.importLocalFile(uri) }
+                    OutlinedButton(onClick = { pickDl.launch(arrayOf("*/*")) }) { Text("Import file", color = CfText) }
                     OutlinedButton(onClick = {
                         minecraftPackage(ctx)?.let { pkg ->
                             ctx.packageManager.getLaunchIntentForPackage(pkg)?.let { ctx.startActivity(it) }
@@ -625,7 +721,7 @@ fun GuidedStepsDialog(onDismiss: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    "Minecraft has imported it and been restarted, so it should be ready. (If you used the tap-to-restart notification, tap it first. If a pack is still missing, close and reopen Minecraft once.)\n\n" +
+                    "Minecraft has imported it and been restarted, so it should be ready. (If you used the tap-to-restart notification, tap it first. If a pack is still missing, close and reopen Minecraft once. If Minecraft opened Google Play or a sign-in screen instead, sign in to the Google account that owns Minecraft, then try again.)\n\n" +
                         "Textures, sounds and UI packs (resource packs) - for every world:\n" +
                         "Minecraft > Settings > Global Resources > My Packs > Activate.\n\n" +
                         "Addons with game logic (behavior packs) - per world:\n" +
